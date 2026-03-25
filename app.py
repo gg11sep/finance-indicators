@@ -66,15 +66,15 @@ def calculate_signal(gold_val, gold_prev, silver_val, silver_prev, dxy_val, dxy_
     else:
         return "🔴 STAY OUT", score
 
-def create_price_chart(data, title, color):
+def create_price_chart(data, title, hex_color):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=data.index,
         y=data.values,
         mode='lines',
-        line=dict(color=color, width=2),
+        line=dict(color=hex_color, width=2),
         fill='tozeroy',
-        fillcolor=f'rgba({color}, 0.1)'
+        fillcolor=hex_color
     ))
     fig.update_layout(
         title=title,
@@ -129,7 +129,7 @@ if data:
                   delta=f"${data['gold_current']-data['gold_prev']:.2f}")
         st.metric("INR Price", f"₹{gold_inr:.2f}", 
                   delta=f"₹{(data['gold_current']-data['gold_prev'])*data['usd_inr']:.2f}")
-        gold_chart = create_price_chart(data["gold"], "Gold Price (24H)", "rgb(255, 193, 7)")
+        gold_chart = create_price_chart(data["gold"], "Gold Price (24H)", "#FFC107")
         st.plotly_chart(gold_chart, use_container_width=True)
     
     with col_silver:
@@ -140,7 +140,7 @@ if data:
                   delta=f"${data['silver_current']-data['silver_prev']:.2f}")
         st.metric("INR Price", f"₹{silver_inr:.2f}", 
                   delta=f"₹{(data['silver_current']-data['silver_prev'])*data['usd_inr']:.2f}")
-        silver_chart = create_price_chart(data["silver"], "Silver Price (24H)", "rgb(192, 192, 192)")
+        silver_chart = create_price_chart(data["silver"], "Silver Price (24H)", "#C0C0C0")
         st.plotly_chart(silver_chart, use_container_width=True)
 
     st.divider()
