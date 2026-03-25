@@ -48,13 +48,13 @@ def get_data():
                 return None
 
 def get_signal(score):
-    if score >= 2:           # Changed from 3
+    if score >= 2:
         return "🟢 STRONG BUY"
     elif score >= 1:
         return "🟢 BUY"
-    elif score >= 0:         # Changed from -1
+    elif score >= 0:
         return "🟡 WAIT"
-    elif score >= -1:        # Changed from -2
+    elif score >= -1:
         return "🟠 CAUTION"
     else:
         return "🔴 STAY OUT"
@@ -103,7 +103,7 @@ if time.time() - st.session_state.last_refresh > 5:
 data = get_data()
 
 if data:
-    # Calculate SEPARATE scores for Gold and Silver
+    # Calculate separate scores for Gold and Silver
     gold_score = calculate_gold_score(
         data["gold_current"], data["gold_prev"],
         data["dxy"], data["dxy_prev"],
@@ -142,8 +142,8 @@ if data:
     col_gold, col_silver = st.columns(2)
     
     with col_gold:
-        st.markdown("### 🥇 Gold")
-        st.metric("Signal", gold_signal, delta=f"Score: {gold_score}")
+        st.markdown(f"### 🥇 Gold {gold_signal}")
+        st.metric("Score", gold_score)
         gold_usd = data['gold_current']
         gold_inr = gold_usd * data['usd_inr']
         st.metric("USD Price", f"${gold_usd:.2f}", 
@@ -154,8 +154,8 @@ if data:
         st.plotly_chart(gold_chart, use_container_width=True)
     
     with col_silver:
-        st.markdown("### 🥈 Silver")
-        st.metric("Signal", silver_signal, delta=f"Score: {silver_score}")
+        st.markdown(f"### 🥈 Silver {silver_signal}")
+        st.metric("Score", silver_score)
         silver_usd = data['silver_current']
         silver_inr = silver_usd * data['usd_inr']
         st.metric("USD Price", f"${silver_usd:.2f}", 
@@ -164,13 +164,3 @@ if data:
                   delta=f"₹{(data['silver_current']-data['silver_prev'])*data['usd_inr']:.2f}")
         silver_chart = create_price_chart(data["silver"], "Silver Price (24H)", "#C0C0C0")
         st.plotly_chart(silver_chart, use_container_width=True)
-
-    st.divider()
-    st.markdown("## 📊 Signal Summary")
-    col_summary1, col_summary2 = st.columns(2)
-    with col_summary1:
-        st.markdown(f"### Gold: {gold_signal}")
-        st.markdown(f"**Score:** {gold_score}")
-    with col_summary2:
-        st.markdown(f"### Silver: {silver_signal}")
-        st.markdown(f"**Score:** {silver_score}")
