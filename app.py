@@ -10,7 +10,7 @@ def get_data():
         dxy = yf.Ticker("DX-Y.NYB").history(period="2d")['Close']
         yield10 = yf.Ticker("^TNX").history(period="2d")['Close']
         gold = yf.Ticker("GC=F").history(period="2d")['Close']
-        oil = yf.Ticker("CL=F").history(period="2d")['Close"]
+        oil = yf.Ticker("CL=F").history(period="2d")['Close']
 
         return {
             "dxy": dxy.iloc[-1],
