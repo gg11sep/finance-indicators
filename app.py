@@ -47,24 +47,33 @@ def get_data():
                 st.info("Yahoo Finance may be rate limiting. Please refresh in a moment.")
                 return None
 
-def calculate_signal(gold_val, gold_prev, silver_val, silver_prev, dxy_val, dxy_prev, yield_val, yield_prev, oil_val, oil_prev):
+def get_signal(score):
+    if score >= 3:
+        return "🟢 STRONG BUY"
+    elif score >= 1:
+        return "🟢 BUY"
+    elif score == 0:
+        return "🟡 WAIT"
+    elif score >= -2:
+        return "🟠 CAUTION"
+    else:
+        return "🔴 STAY OUT"
+
+def calculate_gold_score(gold_val, gold_prev, dxy_val, dxy_prev, yield_val, yield_prev, oil_val, oil_prev):
     score = 0
     score += -1 if dxy_val > dxy_prev else 1
     score += -1 if yield_val > yield_prev else 1
     score += 1 if oil_val > oil_prev else -1
     score += -2 if gold_val < gold_prev else 2
+    return score
+
+def calculate_silver_score(silver_val, silver_prev, dxy_val, dxy_prev, yield_val, yield_prev, oil_val, oil_prev):
+    score = 0
+    score += -1 if dxy_val > dxy_prev else 1
+    score += -1 if yield_val > yield_prev else 1
+    score += 1 if oil_val > oil_prev else -1
     score += -2 if silver_val < silver_prev else 2
-    
-    if score >= 4:
-        return "🟢 STRONG BUY", score
-    elif score >= 2:
-        return "🟢 BUY", score
-    elif score >= -1:
-        return "🟡 WAIT", score
-    elif score >= -3:
-        return "🟠 CAUTION", score
-    else:
-        return "🔴 STAY OUT", score
+    return score
 
 def create_price_chart(data, title, hex_color):
     fig = go.Figure()
@@ -94,13 +103,23 @@ if time.time() - st.session_state.last_refresh > 5:
 data = get_data()
 
 if data:
-    signal, score = calculate_signal(
+    # Calculate SEPARATE scores for Gold and Silver
+    gold_score = calculate_gold_score(
         data["gold_current"], data["gold_prev"],
+        data["dxy"], data["dxy_prev"],
+        data["yield"], data["yield_prev"],
+        data["oil"], data["oil_prev"]
+    )
+    
+    silver_score = calculate_silver_score(
         data["silver_current"], data["silver_prev"],
         data["dxy"], data["dxy_prev"],
         data["yield"], data["yield_prev"],
         data["oil"], data["oil_prev"]
     )
+    
+    gold_signal = get_signal(gold_score)
+    silver_signal = get_signal(silver_score)
 
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
@@ -115,7 +134,8 @@ if data:
     with col4:
         st.metric("🇮🇳 USD to INR", f"₹{data['usd_inr']:.2f}")
     with col5:
-        st.metric("📊 Score", score, delta=f"Signal: {signal}")
+        avg_score = (gold_score + silver_score) / 2
+        st.metric("📊 Avg Score", f"{avg_score:.1f}")
 
     st.divider()
 
@@ -123,6 +143,7 @@ if data:
     
     with col_gold:
         st.markdown("### 🥇 Gold")
+        st.metric("Signal", gold_signal, delta=f"Score: {gold_score}")
         gold_usd = data['gold_current']
         gold_inr = gold_usd * data['usd_inr']
         st.metric("USD Price", f"${gold_usd:.2f}", 
@@ -134,6 +155,7 @@ if data:
     
     with col_silver:
         st.markdown("### 🥈 Silver")
+        st.metric("Signal", silver_signal, delta=f"Score: {silver_score}")
         silver_usd = data['silver_current']
         silver_inr = silver_usd * data['usd_inr']
         st.metric("USD Price", f"${silver_usd:.2f}", 
@@ -144,5 +166,11 @@ if data:
         st.plotly_chart(silver_chart, use_container_width=True)
 
     st.divider()
-    st.markdown(f"## {signal} Trading Signal")
-    st.markdown(f"**Overall Score:** {score}")
+    st.markdown("## 📊 Signal Summary")
+    col_summary1, col_summary2 = st.columns(2)
+    with col_summary1:
+        st.markdown(f"### Gold: {gold_signal}")
+        st.markdown(f"**Score:** {gold_score}")
+    with col_summary2:
+        st.markdown(f"### Silver: {silver_signal}")
+        st.markdown(f"**Score:** {silver_score}")
