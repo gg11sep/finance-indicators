@@ -48,13 +48,13 @@ def get_data():
                 return None
 
 def get_signal(score):
-    if score >= 3:
+    if score >= 2:           # Changed from 3
         return "🟢 STRONG BUY"
     elif score >= 1:
         return "🟢 BUY"
-    elif score == 0:
+    elif score >= 0:         # Changed from -1
         return "🟡 WAIT"
-    elif score >= -2:
+    elif score >= -1:        # Changed from -2
         return "🟠 CAUTION"
     else:
         return "🔴 STAY OUT"
