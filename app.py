@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import feedparser
 import time
@@ -10,7 +9,7 @@ st.set_page_config(layout="wide")
 st.title("🏦 Autonomous Trading Dashboard")
 
 # =========================
-# AUTO REFRESH (FAST LOOP)
+# AUTO REFRESH
 # =========================
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = time.time()
@@ -20,84 +19,55 @@ if time.time() - st.session_state.last_refresh > 30:
     st.rerun()
 
 # =========================
-# SAFE DATA FETCH
+# DATA FETCH (ROBUST)
 # =========================
 @st.cache_data(ttl=30)
 def get_data():
 
-    def fetch_safe(ticker, period="2d", interval=None):
-        try:
-            df = yf.Ticker(ticker).history(period=period, interval=interval)
-            if df is None or df.empty:
-                return pd.Series(dtype=float)
-            return df["Close"]
-        except:
-            return pd.Series(dtype=float)
+    def fetch_multi(tickers, period="2d", interval=None):
+        for t in tickers:
+            try:
+                df = yf.Ticker(t).history(period=period, interval=interval)
+                if df is not None and not df.empty:
+                    return df["Close"]
+            except:
+                continue
+        return pd.Series(dtype=float)
 
     return {
-        "gold": fetch_safe("GC=F", "1d", "5m"),
-        "silver": fetch_safe("SI=F", "1d", "5m"),
-        "dxy": fetch_safe("DX-Y.NYB"),
-        "yield": fetch_safe("^TNX"),
-        "oil": fetch_safe("CL=F"),
-        "usdinr": fetch_safe("USDINR=X")
+        "gold": fetch_multi(["GC=F"], "1d", "5m"),
+        "silver": fetch_multi(["SI=F"], "1d", "5m"),
+        "dxy": fetch_multi(["DX-Y.NYB", "DX=F"]),
+        "yield": fetch_multi(["^TNX", "^IRX"]),
+        "oil": fetch_multi(["CL=F", "BZ=F"]),
+        "usdinr": fetch_multi(["USDINR=X"])
     }
 
 data = get_data()
 
 # =========================
-# SAFE VALUE HELPERS
+# SAFE HELPERS
 # =========================
-def get_last_valid(series):
+def last(series):
     try:
-        if series is None or len(series) == 0:
-            return None
         return float(series.iloc[-1])
     except:
         return None
 
-def get_prev_valid(series):
+def prev(series):
     try:
-        if series is None or len(series) < 2:
-            return None
         return float(series.iloc[-2])
     except:
         return None
 
 # =========================
-# ENTRY / EXIT LOGIC
-# =========================
-def entry_exit(series):
-
-    if series is None or len(series) < 20:
-        return None, None, None, None
-
-    series = series.dropna()
-
-    if len(series) < 20:
-        return None, None, None, None
-
-    support = series.rolling(20).min().iloc[-1]
-    resistance = series.rolling(20).max().iloc[-1]
-    ma = series.rolling(10).mean().iloc[-1]
-    price = series.iloc[-1]
-
-    vol = series.pct_change().std()
-
-    buy_zone = support * (1 + vol)
-    sell_zone = resistance * (1 - vol)
-
-    return price, buy_zone, sell_zone, ma
-
-# =========================
 # SIGNAL ENGINE
 # =========================
-def generate_signal(price, prev):
-
-    if price is None or prev is None:
+def signal(p, pr):
+    if p is None or pr is None:
         return "🟡 WAIT"
 
-    change = (price - prev) / prev
+    change = (p - pr) / pr
 
     if change > 0.005:
         return "🚀 STRONG BUY"
@@ -107,122 +77,190 @@ def generate_signal(price, prev):
         return "🔥 STRONG SELL"
     elif change < 0:
         return "🔴 SELL"
-    else:
-        return "🟡 WAIT"
+    return "🟡 WAIT"
 
 # =========================
-# SAFE NEWS (2 HOUR CACHE)
+# ENTRY / EXIT
 # =========================
-@st.cache_data(ttl=7200)  # 2 hours
-def get_news_safe():
+def entry_exit(series):
+
+    if series is None or len(series) < 20:
+        return None, None, None, None
+
+    s = series.dropna()
+
+    if len(s) < 20:
+        return None, None, None, None
+
+    support = s.rolling(20).min().iloc[-1]
+    resistance = s.rolling(20).max().iloc[-1]
+    ma = s.rolling(10).mean().iloc[-1]
+    price = s.iloc[-1]
+
+    vol = s.pct_change().std()
+
+    buy = support * (1 + vol)
+    sell = resistance * (1 - vol)
+
+    return price, buy, sell, ma
+
+# =========================
+# OUTLOOK
+# =========================
+def outlook(series):
+
+    if series is None or len(series) < 50:
+        return "⚠️ No Data", "⚠️ No Data"
+
+    s = series.dropna()
+    price = s.iloc[-1]
+
+    ma50 = s.rolling(50).mean().iloc[-1]
+    ma200 = s.rolling(200).mean().iloc[-1] if len(s) >= 200 else ma50
+
+    mid = "🟢 Bullish (1–4W)" if price > ma50 else "🔴 Bearish (1–4W)"
+    long = "🚀 Bullish (3–12M)" if price > ma200 else "⚠️ Weak (3–12M)"
+
+    return mid, long
+
+# =========================
+# NEWS (SAFE)
+# =========================
+@st.cache_data(ttl=7200)
+def get_news():
     try:
         feed = feedparser.parse("https://feeds.reuters.com/reuters/businessNews")
-
-        if not feed or not feed.entries:
-            return []
-
-        return [entry.title for entry in feed.entries[:8]]
-
+        return [e.title for e in feed.entries[:8]]
     except:
         return []
 
 # =========================
-# TOP TICKER
+# TICKER
 # =========================
 st.markdown("## 📊 Live Market Ticker")
 
 cols = st.columns(6)
 
 assets = [
-    ("gold", "🥇 Gold", "$"),
-    ("silver", "🥈 Silver", "$"),
-    ("dxy", "💵 DXY", ""),
-    ("yield", "📈 Yield", "%"),
-    ("oil", "🛢️ Oil", "$"),
-    ("usdinr", "🇮🇳 USDINR", "₹")
+    ("gold","🥇 Gold","$"),
+    ("silver","🥈 Silver","$"),
+    ("dxy","💵 DXY",""),
+    ("yield","📈 Yield","%"),
+    ("oil","🛢️ Oil","$"),
+    ("usdinr","🇮🇳 USDINR","₹")
 ]
 
 signals = {}
 
-for i, (key, label, unit) in enumerate(assets):
+for i,(k,l,u) in enumerate(assets):
 
-    s = data[key]
+    p = last(data[k])
+    pr = prev(data[k])
 
-    price = get_last_valid(s)
-    prev = get_prev_valid(s)
-
-    if price is None:
-        cols[i].metric(label, "N/A", "⚠️ No Data")
+    if p is None:
+        cols[i].metric(l,"N/A","⚠️ No Data")
         continue
 
-    signal = generate_signal(price, prev)
-    signals[key] = signal
+    sig = signal(p,pr)
+    signals[k] = sig
 
-    if unit == "%":
-        display = f"{price:.2f}%"
-    elif unit:
-        display = f"{unit}{price:.2f}"
-    else:
-        display = f"{price:.2f}"
-
-    cols[i].metric(label, display, signal)
+    val = f"{u}{p:.2f}" if u and u!="%" else f"{p:.2f}%" if u=="%" else f"{p:.2f}"
+    cols[i].metric(l,val,sig)
 
 st.divider()
 
 # =========================
-# ENTRY / EXIT PANEL
+# OUTLOOK PANEL
+# =========================
+st.subheader("📊 Medium & Long Term Outlook")
+
+for k,l,_ in assets:
+    mid,long = outlook(data[k])
+    st.write(f"### {l}")
+    st.write(f"Medium: {mid}")
+    st.write(f"Long: {long}")
+
+# =========================
+# ENTRY EXIT
 # =========================
 st.subheader("🎯 Entry / Exit Zones")
 
-for key, label, unit in assets:
+for k,l,_ in assets:
 
-    s = data[key]
-    price, buy, sell, ma = entry_exit(s)
+    p,b,s,m = entry_exit(data[k])
 
-    st.write(f"### {label}")
+    st.write(f"### {l}")
 
-    if price is None:
+    if p is None:
         st.write("⚠️ Not enough data")
         continue
 
-    st.write(f"Price: {price:.2f}")
-    st.write(f"🟢 Buy Zone: {buy:.2f}")
-    st.write(f"🔴 Sell Zone: {sell:.2f}")
-    st.write(f"📈 Trend (MA): {ma:.2f}")
-    st.write(f"Signal: {signals.get(key,'-')}")
+    st.write(f"Price: {p:.2f}")
+    st.write(f"🟢 Buy Zone: {b:.2f}")
+    st.write(f"🔴 Sell Zone: {s:.2f}")
+    st.write(f"📈 MA: {m:.2f}")
+    st.write(f"Signal: {signals.get(k,'-')}")
 
 # =========================
-# GOLD CHART WITH ZONES
+# CHART FUNCTION
 # =========================
-st.subheader("📈 Gold Chart with Zones")
+def plot_chart(series, title):
 
-gold = data["gold"]
+    p,b,s,m = entry_exit(series)
 
-price, buy, sell, ma = entry_exit(gold)
-
-if price is not None:
+    if p is None:
+        st.warning("⚠️ Not enough data")
+        return
 
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(x=gold.index, y=gold, name="Price"))
-    fig.add_trace(go.Scatter(x=gold.index, y=[buy]*len(gold), name="Buy Zone"))
-    fig.add_trace(go.Scatter(x=gold.index, y=[sell]*len(gold), name="Sell Zone"))
-    fig.add_trace(go.Scatter(x=gold.index, y=[ma]*len(gold), name="MA"))
+    fig.add_trace(go.Scatter(x=series.index,y=series,name="Price"))
+    fig.add_trace(go.Scatter(x=series.index,y=[b]*len(series),name="Buy Zone"))
+    fig.add_trace(go.Scatter(x=series.index,y=[s]*len(series),name="Sell Zone"))
+    fig.add_trace(go.Scatter(x=series.index,y=[m]*len(series),name="MA"))
 
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(title=title)
 
-else:
-    st.warning("⚠️ Not enough data for chart")
+    st.plotly_chart(fig,use_container_width=True)
 
 # =========================
-# NEWS SECTION (SAFE + SLOW)
+# GOLD CHART
 # =========================
-st.subheader("📰 Market News (Updated every 2 hours)")
+st.subheader("📈 Gold Chart")
+plot_chart(data["gold"],"Gold")
 
-news = get_news_safe()
+# =========================
+# SILVER CHART
+# =========================
+st.subheader("📈 Silver Chart")
+plot_chart(data["silver"],"Silver")
+
+# =========================
+# NEWS
+# =========================
+st.subheader("📰 Market News (2h refresh)")
+
+news = get_news()
 
 if news:
     for n in news:
-        st.write("•", n)
+        st.write("•",n)
 else:
     st.write("⚠️ News unavailable")
+
+# =========================
+# MACRO INSIGHT
+# =========================
+st.subheader("🧠 Macro Insight")
+
+g_mid,g_long = outlook(data["gold"])
+d_mid,d_long = outlook(data["dxy"])
+
+if "Bullish" in g_long and "Bearish" in d_mid:
+    st.success("🔥 Strong macro tailwind for Gold/Silver")
+
+elif "Bearish" in g_mid:
+    st.warning("⚠️ Short-term pressure on metals")
+
+else:
+    st.info("🟡 Mixed signals")
