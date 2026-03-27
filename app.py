@@ -4,83 +4,85 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import feedparser
-import requests
-from bs4 import BeautifulSoup
+import time
 
 st.set_page_config(layout="wide")
-st.title("🏦 Autonomous Trading Engine")
+st.title("🏦 Autonomous Trading Dashboard")
 
 # =========================
-# SAFE HELPERS
+# AUTO REFRESH (FAST LOOP)
 # =========================
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = time.time()
 
-def safe_last(series):
-    try: return series.iloc[-1]
-    except: return 0
-
-def safe_prev(series):
-    try: return series.iloc[-2]
-    except: return 0
-
-def safe_vol(series):
-    try: return series.pct_change().std()
-    except: return 0
+if time.time() - st.session_state.last_refresh > 30:
+    st.session_state.last_refresh = time.time()
+    st.rerun()
 
 # =========================
-# DATA
+# SAFE DATA FETCH
 # =========================
-
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def get_data():
+
+    def fetch_safe(ticker, period="2d", interval=None):
+        try:
+            df = yf.Ticker(ticker).history(period=period, interval=interval)
+            if df is None or df.empty:
+                return pd.Series(dtype=float)
+            return df["Close"]
+        except:
+            return pd.Series(dtype=float)
+
     return {
-        "gold": yf.Ticker("GC=F").history(period="1d", interval="5m")["Close"],
-        "silver": yf.Ticker("SI=F").history(period="1d", interval="5m")["Close"],
-        "dxy": yf.Ticker("DX-Y.NYB").history(period="2d")["Close"],
-        "yield": yf.Ticker("^TNX").history(period="2d")["Close"],
-        "oil": yf.Ticker("CL=F").history(period="2d")["Close"],
-        "usdinr": yf.Ticker("USDINR=X").history(period="2d")["Close"]
+        "gold": fetch_safe("GC=F", "1d", "5m"),
+        "silver": fetch_safe("SI=F", "1d", "5m"),
+        "dxy": fetch_safe("DX-Y.NYB"),
+        "yield": fetch_safe("^TNX"),
+        "oil": fetch_safe("CL=F"),
+        "usdinr": fetch_safe("USDINR=X")
     }
 
 data = get_data()
 
 # =========================
-# SENTIMENT
+# SAFE VALUE HELPERS
 # =========================
-
-def sentiment():
+def get_last_valid(series):
     try:
-        feed = feedparser.parse("https://feeds.reuters.com/reuters/businessNews")
-        headlines = [e.title.lower() for e in feed.entries[:5]]
+        if series is None or len(series) == 0:
+            return None
+        return float(series.iloc[-1])
     except:
-        headlines = []
+        return None
 
-    score = 0
-    for h in headlines:
-        if "rate cut" in h or "stimulus" in h: score += 2
-        if "war" in h or "attack" in h: score += 1
-        if "recession" in h: score -= 1
-        if "rate hike" in h: score -= 2
-
-    return score
-
-sent_score = sentiment()
+def get_prev_valid(series):
+    try:
+        if series is None or len(series) < 2:
+            return None
+        return float(series.iloc[-2])
+    except:
+        return None
 
 # =========================
-# ENTRY EXIT ZONES
+# ENTRY / EXIT LOGIC
 # =========================
-
 def entry_exit(series):
 
+    if series is None or len(series) < 20:
+        return None, None, None, None
+
+    series = series.dropna()
+
     if len(series) < 20:
-        return 0,0,0,0
+        return None, None, None, None
 
     support = series.rolling(20).min().iloc[-1]
     resistance = series.rolling(20).max().iloc[-1]
-
     ma = series.rolling(10).mean().iloc[-1]
     price = series.iloc[-1]
 
-    vol = safe_vol(series)
+    vol = series.pct_change().std()
 
     buy_zone = support * (1 + vol)
     sell_zone = resistance * (1 - vol)
@@ -90,78 +92,137 @@ def entry_exit(series):
 # =========================
 # SIGNAL ENGINE
 # =========================
+def generate_signal(price, prev):
 
-def signal(price, buy, sell, ma):
+    if price is None or prev is None:
+        return "🟡 WAIT"
 
-    if price <= buy:
-        return "🟢 BUY ZONE"
-    elif price >= sell:
-        return "🔴 SELL ZONE"
-    elif price > ma:
-        return "🟡 HOLD (UPTREND)"
+    change = (price - prev) / prev
+
+    if change > 0.005:
+        return "🚀 STRONG BUY"
+    elif change > 0:
+        return "🟢 BUY"
+    elif change < -0.005:
+        return "🔥 STRONG SELL"
+    elif change < 0:
+        return "🔴 SELL"
     else:
-        return "🟠 WAIT"
+        return "🟡 WAIT"
+
+# =========================
+# SAFE NEWS (2 HOUR CACHE)
+# =========================
+@st.cache_data(ttl=7200)  # 2 hours
+def get_news_safe():
+    try:
+        feed = feedparser.parse("https://feeds.reuters.com/reuters/businessNews")
+
+        if not feed or not feed.entries:
+            return []
+
+        return [entry.title for entry in feed.entries[:8]]
+
+    except:
+        return []
 
 # =========================
 # TOP TICKER
 # =========================
-
 st.markdown("## 📊 Live Market Ticker")
 
 cols = st.columns(6)
 
-assets = ["gold","silver","dxy","yield","oil","usdinr"]
-labels = ["🥇 Gold","🥈 Silver","💵 DXY","📈 Yield","🛢️ Oil","🇮🇳 USDINR"]
+assets = [
+    ("gold", "🥇 Gold", "$"),
+    ("silver", "🥈 Silver", "$"),
+    ("dxy", "💵 DXY", ""),
+    ("yield", "📈 Yield", "%"),
+    ("oil", "🛢️ Oil", "$"),
+    ("usdinr", "🇮🇳 USDINR", "₹")
+]
 
 signals = {}
 
-for i, a in enumerate(assets):
+for i, (key, label, unit) in enumerate(assets):
 
-    s = data[a]
+    s = data[key]
 
-    price, buy, sell, ma = entry_exit(s)
+    price = get_last_valid(s)
+    prev = get_prev_valid(s)
 
-    sig = signal(price, buy, sell, ma)
-    signals[a] = sig
+    if price is None:
+        cols[i].metric(label, "N/A", "⚠️ No Data")
+        continue
 
-    cols[i].metric(labels[i], f"{price:.2f}", sig)
+    signal = generate_signal(price, prev)
+    signals[key] = signal
+
+    if unit == "%":
+        display = f"{price:.2f}%"
+    elif unit:
+        display = f"{unit}{price:.2f}"
+    else:
+        display = f"{price:.2f}"
+
+    cols[i].metric(label, display, signal)
 
 st.divider()
 
 # =========================
-# DETAIL PANEL
+# ENTRY / EXIT PANEL
 # =========================
-
 st.subheader("🎯 Entry / Exit Zones")
 
-for a in assets:
+for key, label, unit in assets:
 
-    s = data[a]
-
+    s = data[key]
     price, buy, sell, ma = entry_exit(s)
 
-    st.write(f"### {a.upper()}")
+    st.write(f"### {label}")
+
+    if price is None:
+        st.write("⚠️ Not enough data")
+        continue
+
     st.write(f"Price: {price:.2f}")
     st.write(f"🟢 Buy Zone: {buy:.2f}")
     st.write(f"🔴 Sell Zone: {sell:.2f}")
     st.write(f"📈 Trend (MA): {ma:.2f}")
-    st.write(f"Signal: {signals[a]}")
+    st.write(f"Signal: {signals.get(key,'-')}")
 
 # =========================
-# CHART WITH ZONES
+# GOLD CHART WITH ZONES
 # =========================
-
 st.subheader("📈 Gold Chart with Zones")
 
 gold = data["gold"]
 
 price, buy, sell, ma = entry_exit(gold)
 
-fig = go.Figure()
+if price is not None:
 
-fig.add_trace(go.Scatter(x=gold.index, y=gold, name="Price"))
-fig.add_trace(go.Scatter(x=gold.index, y=[buy]*len(gold), name="Buy Zone"))
-fig.add_trace(go.Scatter(x=gold.index, y=[sell]*len(gold), name="Sell Zone"))
-fig.add_trace(go.Scatter(x=gold.index, y=[ma]*len(gold), name="MA"))
+    fig = go.Figure()
 
-st.plotly_chart(fig, use_container_width=True)
+    fig.add_trace(go.Scatter(x=gold.index, y=gold, name="Price"))
+    fig.add_trace(go.Scatter(x=gold.index, y=[buy]*len(gold), name="Buy Zone"))
+    fig.add_trace(go.Scatter(x=gold.index, y=[sell]*len(gold), name="Sell Zone"))
+    fig.add_trace(go.Scatter(x=gold.index, y=[ma]*len(gold), name="MA"))
+
+    st.plotly_chart(fig, use_container_width=True)
+
+else:
+    st.warning("⚠️ Not enough data for chart")
+
+# =========================
+# NEWS SECTION (SAFE + SLOW)
+# =========================
+st.subheader("📰 Market News (Updated every 2 hours)")
+
+news = get_news_safe()
+
+if news:
+    for n in news:
+        st.write("•", n)
+else:
+    st.write("⚠️ News unavailable")
