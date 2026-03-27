@@ -134,7 +134,7 @@ def adjust_alloc(a, gv, sv):
 # =========================
 
 class Portfolio:
-    def _init_(self):
+    def __init__(self):
         self.cap = 100000
 
     def alloc(self, a, gp, sp):
