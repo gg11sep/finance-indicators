@@ -5,3 +5,4 @@ pandas
 numpy
 feedparser
 requests
+beautifulsoup4
